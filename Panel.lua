@@ -1,251 +1,360 @@
-local player = game.Players.LocalPlayer
-local mouse = player:GetMouse()
-local character = player.Character or player.CharacterAdded:Wait()
+--!strict
 
--- Temel değişkenler
-local flying = false
-local noclip = false
-local bodyGyro, bodyVelocity
-local speedValue = 50
-local jumpPowerValue = 100
-local runSpeedValue = 16
-local physicsPushForce = 500
+-- Core Roblox Servisleri
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
--- Helper function: newInstance with properties
-local function newInstance(className, properties)
-    local inst = Instance.new(className)
-    for k,v in pairs(properties) do
-        inst[k] = v
-    end
-    return inst
-end
-
--- GUI oluşturma
+-- Yerel Oyuncu ve Karakter Bilgileri
+local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
-local screenGui = newInstance("ScreenGui", {Name = "ShodanCodePanel", Parent = playerGui})
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 
-local mainFrame = newInstance("Frame", {
-    Parent = screenGui,
-    Size = UDim2.new(0, 350, 0, 400),
-    Position = UDim2.new(0, 100, 0, 100),
-    BackgroundColor3 = Color3.fromRGB(35, 35, 40),
-    BorderSizePixel = 0,
-    Active = true,
-    Draggable = true,
-    ClipsDescendants = true,
-    ZIndex = 10,
-})
+-- Varsayılan Değerler
+local defaultWalkSpeed = humanoid.WalkSpeed
+local defaultJumpPower = humanoid.JumpPower
+local defaultGravity = Workspace.Gravity
 
-local titleBar = newInstance("Frame", {
-    Parent = mainFrame,
-    Size = UDim2.new(1, 0, 0, 30),
-    BackgroundColor3 = Color3.fromRGB(20, 20, 25),
-})
+-- Özellik Durumları
+local isFlying = false
+local isNoclipping = false
+local canFirlat = false
+local isAutoDriving = false
+local currentVehicleSeat: VehicleSeat? = nil
 
-local titleLabel = newInstance("TextLabel", {
-    Parent = titleBar,
-    Size = UDim2.new(1, -50, 1, 0),
-    Position = UDim2.new(0, 10, 0, 0),
-    Text = "ShodanCode Panel",
-    TextColor3 = Color3.fromRGB(200, 200, 200),
-    Font = Enum.Font.GothamBold,
-    TextSize = 18,
-    BackgroundTransparency = 1,
-    TextXAlignment = Enum.TextXAlignment.Left,
-})
+-- Aktif Bağlantılar (temizlik için)
+local touchConnection: RBXScriptConnection? = nil
+local driveConnection: RBXScriptConnection? = nil
+local diedConnection: RBXScriptConnection? = nil
+local seatedConnection: RBXScriptConnection? = nil
+local characterAddedConnection: RBXScriptConnection? = nil
 
-local closeButton = newInstance("TextButton", {
-    Parent = titleBar,
-    Size = UDim2.new(0, 40, 1, 0),
-    Position = UDim2.new(1, -45, 0, 0),
-    Text = "X",
-    TextColor3 = Color3.fromRGB(230, 60, 60),
-    Font = Enum.Font.GothamBold,
-    TextSize = 22,
-    BackgroundColor3 = Color3.fromRGB(35, 35, 40),
-    BorderSizePixel = 0,
-})
+--- Panel Oluşturma ---
 
-closeButton.MouseButton1Click:Connect(function()
-    screenGui:Destroy()
-    stopFlying()
-    noclip = false
-    setNoclip(false)
-    resetCharacterSpeed()
+-- Ana ScreenGui
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ShodanCodeFeaturePanel"
+ScreenGui.Parent = playerGui
+
+-- Ana Çerçeve (Ana Panel)
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainPanel"
+MainFrame.Size = UDim2.new(0.3, 0, 0.7, 0) -- Ekranın %30 genişliği, %70 yüksekliği
+MainFrame.Position = UDim2.new(0.35, 0, 0.15, 0) -- Ekranın ortasına yakın konumlandır
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 2
+MainFrame.BorderColor3 = Color3.fromRGB(60, 60, 60)
+MainFrame.Active = true -- Sürüklemek için gerekli
+MainFrame.Draggable = true -- Sürüklenebilir yap
+MainFrame.Parent = ScreenGui
+
+-- UI Corner (köşeleri yumuşatma)
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+-- Başlık Çubuğu
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0.1, 0)
+TitleBar.Position = UDim2.new(0, 0, 0, 0)
+TitleBar.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+TitleBar.Parent = MainFrame
+
+-- Başlık Metni
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Name = "TitleLabel"
+TitleLabel.Size = UDim2.new(0.85, 0, 1, 0)
+TitleLabel.Position = UDim2.new(0, 0, 0, 0)
+TitleLabel.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleLabel.Font = Enum.Font.SourceSansBold
+TitleLabel.TextSize = 22
+TitleLabel.Text = "ShodanCode Özellik Paneli"
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Center
+TitleLabel.Parent = TitleBar
+
+-- Kapatma Butonu
+local CloseButton = Instance.new("TextButton")
+CloseButton.Name = "CloseButton"
+CloseButton.Size = UDim2.new(0.15, 0, 1, 0)
+CloseButton.Position = UDim2.new(0.85, 0, 0, 0)
+CloseButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.Font = Enum.Font.SourceSansBold
+CloseButton.TextSize = 20
+CloseButton.Text = "X"
+CloseButton.Parent = TitleBar
+
+CloseButton.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+    -- Panel kapatıldığında tüm özellikleri varsayılana döndür
+    humanoid.WalkSpeed = defaultWalkSpeed
+    humanoid.JumpPower = defaultJumpPower
+    if isFlying then toggleFly() end
+    if isNoclipping then toggleNoclip() end
+    if canFirlat then toggleFirlat() end
+    if isAutoDriving then toggleAutoDrive() end
 end)
 
--- Bölme (line) fonksiyonu
-local function addDivider(parent, y)
-    local line = newInstance("Frame", {
-        Parent = parent,
-        Size = UDim2.new(1, -20, 0, 1),
-        Position = UDim2.new(0, 10, 0, y),
-        BackgroundColor3 = Color3.fromRGB(70, 70, 70),
-    })
-    return line
+-- Özellikler için ScrollFrame (Kaydırılabilir Alan)
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Name = "FeaturesScrollFrame"
+ScrollFrame.Size = UDim2.new(1, 0, 0.9, 0)
+ScrollFrame.Position = UDim2.new(0, 0, 0.1, 0)
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0) -- İçerik eklendikçe otomatik ayarlanacak
+ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.Parent = MainFrame
+
+-- Özellik Butonlarını düzenlemek için UIListLayout
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = ScrollFrame
+UIListLayout.Padding = UDim.new(0, 8) -- Butonlar arası boşluk
+UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- Her özellik için fonksiyon ve buton oluşturma şablonu
+local function createToggleButton(name: string, defaultText: string, activeText: string, color: Color3, callback: (boolean) -> ())
+    local button = Instance.new("TextButton")
+    button.Name = name .. "Button"
+    button.Size = UDim2.new(0.9, 0, 0.09, 0) -- Sabit boyut
+    button.BackgroundColor3 = color
+    button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    button.Font = Enum.Font.SourceSansBold
+    button.TextSize = 18
+    button.Text = defaultText
+    button.Parent = ScrollFrame
+
+    local uic = Instance.new("UICorner")
+    uic.CornerRadius = UDim.new(0, 6)
+    uic.Parent = button
+
+    local isActive = false
+    button.MouseButton1Click:Connect(function()
+        isActive = not isActive
+        button.Text = isActive and activeText or defaultText
+        callback(isActive)
+    end)
+    return button, isActive
 end
 
-addDivider(mainFrame, 35)
+local function createCycleButton(name: string, prefix: string, states: {any}, initialIndex: number, color: Color3, callback: (any) -> ())
+    local button = Instance.new("TextButton")
+    button.Name = name .. "Button"
+    button.Size = UDim2.new(0.9, 0, 0.09, 0)
+    button.BackgroundColor3 = color
+    button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    button.Font = Enum.Font.SourceSansBold
+    button.TextSize = 18
+    button.Text = prefix .. states[initialIndex]
+    button.Parent = ScrollFrame
 
--- Label + Toggle helper
-local function addToggle(name, parent, posY, default, callback)
-    local lbl = newInstance("TextLabel", {
-        Parent = parent,
-        Text = name,
-        TextColor3 = Color3.fromRGB(210,210,210),
-        Font = Enum.Font.Gotham,
-        TextSize = 16,
-        Size = UDim2.new(0.7, 0, 0, 25),
-        Position = UDim2.new(0, 10, 0, posY),
-        BackgroundTransparency = 1,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    })
+    local uic = Instance.new("UICorner")
+    uic.CornerRadius = UDim.new(0, 6)
+    uic.Parent = button
 
-    local toggleBtn = newInstance("TextButton", {
-        Parent = parent,
-        Size = UDim2.new(0, 50, 0, 25),
-        Position = UDim2.new(0.75, 0, 0, posY),
-        Text = default and "Açık" or "Kapalı",
-        BackgroundColor3 = default and Color3.fromRGB(50,200,50) or Color3.fromRGB(180,50,50),
-        TextColor3 = Color3.fromRGB(255,255,255),
-        Font = Enum.Font.GothamBold,
-        TextSize = 14,
-        BorderSizePixel = 0,
-    })
-
-    local toggled = default
-    toggleBtn.MouseButton1Click:Connect(function()
-        toggled = not toggled
-        toggleBtn.Text = toggled and "Açık" or "Kapalı"
-        toggleBtn.BackgroundColor3 = toggled and Color3.fromRGB(50,200,50) or Color3.fromRGB(180,50,50)
-        callback(toggled)
+    local currentIndex = initialIndex
+    button.MouseButton1Click:Connect(function()
+        currentIndex = (currentIndex % #states) + 1
+        local value = states[currentIndex]
+        button.Text = prefix .. value
+        callback(value)
     end)
+    callback(states[initialIndex]) -- Başlangıç değerini ayarla
+    return button
 end
 
--- Label + Slider helper
-local function addSlider(name, parent, posY, min, max, default, callback)
-    local lbl = newInstance("TextLabel", {
-        Parent = parent,
-        Text = name .. ": " .. tostring(default),
-        TextColor3 = Color3.fromRGB(210,210,210),
-        Font = Enum.Font.Gotham,
-        TextSize = 16,
-        Size = UDim2.new(0.7, 0, 0, 25),
-        Position = UDim2.new(0, 10, 0, posY),
-        BackgroundTransparency = 1,
-        TextXAlignment = Enum.TextXAlignment.Left,
-    })
+--- Özellik Fonksiyonları ---
 
-    local slider = newInstance("TextButton", {
-        Parent = parent,
-        Size = UDim2.new(0.7, 0, 0, 15),
-        Position = UDim2.new(0.28, 0, 0, posY + 20),
-        BackgroundColor3 = Color3.fromRGB(70,70,70),
-        BorderSizePixel = 0,
-        Text = "",
-    })
+-- Karakter Yeniden Doğduğunda Durumları Sıfırlama
+local function resetFeaturesOnSpawn()
+    -- Önceki bağlantıları temizle
+    if diedConnection then diedConnection:Disconnect() end
+    if seatedConnection then seatedConnection:Disconnect() end
+    if touchConnection then touchConnection:Disconnect() end
+    if driveConnection then driveConnection:Disconnect() end
 
-    local fill = newInstance("Frame", {
-        Parent = slider,
-        Size = UDim2.new((default - min) / (max - min), 0, 1, 0),
-        BackgroundColor3 = Color3.fromRGB(50, 200, 50),
-    })
+    -- Yeni karakteri bekle
+    character = player.Character or player.CharacterAdded:Wait()
+    humanoid = character:WaitForChild("Humanoid")
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
 
-    local dragging = false
+    humanoid.WalkSpeed = defaultWalkSpeed
+    humanoid.JumpPower = defaultJumpPower
+    Workspace.Gravity = defaultGravity
 
-    slider.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
-    end)
+    -- Uçma ve Noclip durumlarını sıfırla ve UI'ı güncelle
+    if isFlying then toggleFly(false) end
+    if isNoclipping then toggleNoclip(false) end
+    if canFirlat then toggleFirlat(false) end
+    if isAutoDriving then toggleAutoDrive(false) end
+    currentVehicleSeat = nil
 
-    slider.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-
-    slider.InputChanged:Connect(function(input)
-        if dragging then
-            local pos = math.clamp(input.Position.X - slider.AbsolutePosition.X, 0, slider.AbsoluteSize.X)
-            local val = (pos / slider.AbsoluteSize.X) * (max - min) + min
-            fill.Size = UDim2.new((val - min) / (max - min), 0, 1, 0)
-            lbl.Text = name .. ": " .. string.format("%.1f", val)
-            callback(val)
-        end
-    end)
+    -- Yeniden doğduktan sonra yeni bağlantıları kur
+    diedConnection = humanoid.Died:Connect(resetFeaturesOnSpawn)
+    seatedConnection = humanoid.Seated:Connect(onCharacterSeated)
 end
 
--- ** Uçuş fonksiyonları **
-local function startFlying()
-    local char = player.Character or player.CharacterAdded:Wait()
-    local hrp = char:WaitForChild("HumanoidRootPart")
+characterAddedConnection = player.CharacterAdded:Connect(resetFeaturesOnSpawn)
+diedConnection = humanoid.Died:Connect(resetFeaturesOnSpawn) -- İlk bağlantıyı kur
 
-    bodyGyro = Instance.new("BodyGyro")
-    bodyGyro.P = 9e4
-    bodyGyro.maxTorque = Vector3.new(9e9,9e9,9e9)
-    bodyGyro.CFrame = hrp.CFrame
-    bodyGyro.Parent = hrp
-
-    bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Velocity = Vector3.new(0,0,0)
-    bodyVelocity.MaxForce = Vector3.new(9e9,9e9,9e9)
-    bodyVelocity.Parent = hrp
-
-    flying = true
-
-    local rs = game:GetService("RunService")
-    local connection
-    connection = rs.RenderStepped:Connect(function()
-        if not flying then
-            connection:Disconnect()
-            return
-        end
-        if char and char:FindFirstChild("Humanoid") then
-            local moveDir = char.Humanoid.MoveDirection
-            bodyVelocity.Velocity = (moveDir * speedValue) + Vector3.new(0, 0.5, 0)
-            bodyGyro.CFrame = workspace.CurrentCamera.CFrame
-        end
-    end)
+-- Hız Ayarı
+local speedStates = {defaultWalkSpeed, 30, 50, 80, 120} -- Varsayılan hız da dahil
+local function setWalkSpeed(speed: number)
+    humanoid.WalkSpeed = speed
 end
+local speedButton = createCycleButton("Speed", "Hız: ", speedStates, 1, Color3.fromRGB(70, 130, 180), setWalkSpeed)
 
-local function stopFlying()
-    flying = false
-    if bodyGyro then bodyGyro:Destroy() end
-    if bodyVelocity then bodyVelocity:Destroy() end
+-- Zıplama Yüksekliği Ayarı
+local jumpStates = {defaultJumpPower, 100, 200, 500, 1000} -- Varsayılan zıplama gücü de dahil
+local function setJumpPower(power: number)
+    humanoid.JumpPower = power
 end
+local jumpButton = createCycleButton("Jump", "Zıplama: ", jumpStates, 1, Color3.fromRGB(70, 130, 180), setJumpPower)
 
--- Noclip fonksiyonu
-local function setNoclip(enabled)
-    local char = player.Character
-    if not char then return end
+-- Uçma (Fly) Özelliği
+local function toggleFly(active: boolean)
+    isFlying = active
+    if isFlying then
+        humanoid.PlatformStand = true
+        humanoidRootPart.Anchored = true
+        Workspace.Gravity = 0
+    else
+        humanoidRootPart.Anchored = false
+        humanoid.PlatformStand = false
+        Workspace.Gravity = defaultGravity
+    end
+end
+local flyButton, initialFlyState = createToggleButton("Fly", "Uçma: Kapalı", "Uçma: Açık", Color3.fromRGB(70, 130, 180), toggleFly)
 
-    for _, part in pairs(char:GetChildren()) do
+-- Noclip Özelliği
+local function toggleNoclip(active: boolean)
+    isNoclipping = active
+    for _, part in ipairs(character:GetChildren()) do
         if part:IsA("BasePart") then
-            part.CanCollide = not enabled
+            task.spawn(function() -- Her parçayı ayrı bir iş parçacığında işle
+                pcall(function()
+                    part.CanCollide = not isNoclipping
+                end)
+            end)
+        end
+    end
+end
+local noclipButton, initialNoclipState = createToggleButton("Noclip", "Noclip: Kapalı", "Noclip: Açık", Color3.fromRGB(70, 130, 180), toggleNoclip)
+
+-- Anchor'u Olmayan Objeleri Fırlatma
+local function onPartTouched(otherPart: BasePart)
+    if canFirlat and otherPart and otherPart.Parent ~= character and otherPart.Parent ~= Workspace.Terrain then
+        if otherPart:IsA("BasePart") and not otherPart.Anchored then
+            local direction = humanoidRootPart.CFrame.lookVector * 150 -- İtme yönü ve gücü
+            -- Eğer obje çok ağırsa daha fazla güç uygulayabilirsin
+            otherPart:ApplyImpulse(direction * otherPart:GetMass() * 0.1) -- Kütleye göre itme gücü, çarpanı ayarla
         end
     end
 end
 
--- Hız ve Zıplama ayarları
-local function setCharacterSpeed(speed)
-    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.WalkSpeed = speed
+local function toggleFirlat(active: boolean)
+    canFirlat = active
+    if canFirlat then
+        if not touchConnection then
+            touchConnection = humanoidRootPart.Touched:Connect(onPartTouched)
+        end
+    else
+        if touchConnection then
+            touchConnection:Disconnect()
+            touchConnection = nil
+        end
+    end
+end
+local firlatmaButton, initialFirlatState = createToggleButton("Firlatma", "Objeleri Fırlat: Kapalı", "Objeleri Fırlat: Açık", Color3.fromRGB(70, 130, 180), toggleFirlat)
+
+-- Araçları Otomatik Sürme
+local function startAutoDrive(seat: VehicleSeat)
+    if driveConnection then driveConnection:Disconnect() end -- Önceki bağlantıyı kes
+    driveConnection = RunService.Heartbeat:Connect(function()
+        if seat and seat.Occupant == humanoid then
+            seat.Throttle = 1 -- Sürekli ileri git
+            seat.Steer = 0 -- Direksiyonu düz tut
+            -- Daha gelişmiş otomatik sürüş algoritmaları burada eklenebilir.
+            -- Örneğin, bir hedef noktasına yönelme veya bir patikayı takip etme.
+        else
+            -- Koltuktan kalkarsa otomatik sürüşü durdur
+            toggleAutoDrive(false)
+            autoDriveButton.Text = "Otomatik Sürüş: Kapalı"
+        end
+    end)
+    print("Otomatik sürüş başladı!")
+end
+
+local function stopAutoDrive()
+    if driveConnection then
+        driveConnection:Disconnect()
+        driveConnection = nil
+    end
+    if currentVehicleSeat then
+        currentVehicleSeat.Throttle = 0
+        currentVehicleSeat.Steer = 0
+    end
+    print("Otomatik sürüş durdu.")
+end
+
+local function toggleAutoDrive(active: boolean)
+    isAutoDriving = active
+    if isAutoDriving then
+        if currentVehicleSeat and currentVehicleSeat.Occupant == humanoid then
+            startAutoDrive(currentVehicleSeat)
+        else
+            -- Eğer araçta değilse, özelliği aktif et ama hemen sürme
+            warn("Otomatik sürüş açıldı, ancak bir araçta değilsiniz. Araca bindiğinizde başlayacaktır.")
+        end
+    else
+        stopAutoDrive()
     end
 end
 
-local function setCharacterJumpPower(jumpPower)
-    local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        humanoid.JumpPower = jumpPower
+-- Oyuncu bir koltuğa oturduğunda kontrol
+seatedConnection = humanoid.Seated:Connect(function(seated: boolean, seat: Seat?)
+    if seated and seat:IsA("VehicleSeat") then
+        currentVehicleSeat = seat
+        if isAutoDriving then
+            startAutoDrive(currentVehicleSeat)
+        end
+    else
+        if isAutoDriving then
+            stopAutoDrive()
+        end
+        currentVehicleSeat = nil
     end
+end)
+
+local autoDriveButton, initialAutoDriveState = createToggleButton("AutoDrive", "Otomatik Sürüş: Kapalı", "Otomatik Sürüş: Açık", Color3.fromRGB(70, 130, 180), toggleAutoDrive)
+
+
+-- CanvasSize'ı tüm elemanlar yerleştirildikten sonra ayarla
+local function updateCanvasSize()
+    local contentHeight = UIListLayout.AbsoluteContentSize.Y
+    ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, contentHeight + UIListLayout.Padding.Offset)
 end
 
-local function resetCharacterSpeed()
-    setCharacterSpeed(16)
-    setCharacterJumpPower(50)
-end
+-- Tüm UI elemanları eklendikten sonra bir kez güncelle
+task.wait(0.1) -- UI elemanlarının oluşturulması için kısa bir bekleme
+updateCanvasSize()
 
--- Physics Push: temas eden Anchor olmayan objeleri iter
-local
+-- UI elemanları eklendiğinde veya çıkarıldığında CanvasSize'ı güncelle
+UIListLayout.ChildAdded:Connect(updateCanvasSize)
+UIListLayout.ChildRemoved:Connect(updateCanvasSize)
+
+-- Panel gizleme/gösterme için bir tuş bağlama (örneğin 'P' tuşu)
+local UserInputService = game:GetService("UserInputService")
+local isPanelVisible = true
+
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if input.KeyCode == Enum.KeyCode.P and not gameProcessedEvent then
+        isPanelVisible = not isPanelVisible
+        MainFrame.Visible = isPanelVisible
+    end
+end)
