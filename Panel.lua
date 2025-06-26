@@ -4,6 +4,9 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local ContextActionService = game:GetService("ContextActionService")
+local TextChatService = game:GetService("TextChatService")
 
 -- Yerel Oyuncu ve Karakter Bilgileri
 local player = Players.LocalPlayer
@@ -23,6 +26,23 @@ local isNoclipping = false
 local canFirlat = false
 local isAutoDriving = false
 local currentVehicleSeat: VehicleSeat? = nil
+local flySpeed = 50
+local flyKeys = {
+    Forward = Enum.KeyCode.W,
+    Backward = Enum.KeyCode.S,
+    Left = Enum.KeyCode.A,
+    Right = Enum.KeyCode.D,
+    Up = Enum.KeyCode.Space,
+    Down = Enum.KeyCode.LeftShift
+}
+
+-- Mobil kontroller için
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local touchControlsFrame: Frame? = nil
+local touchJoystick: Frame? = nil
+local touchJumpButton: TextButton? = nil
+local touchFlyUpButton: TextButton? = nil
+local touchFlyDownButton: TextButton? = nil
 
 -- Aktif Bağlantılar (temizlik için)
 local touchConnection: RBXScriptConnection? = nil
@@ -30,6 +50,8 @@ local driveConnection: RBXScriptConnection? = nil
 local diedConnection: RBXScriptConnection? = nil
 local seatedConnection: RBXScriptConnection? = nil
 local characterAddedConnection: RBXScriptConnection? = nil
+local flyConnection: RBXScriptConnection? = nil
+local chatConnection: RBXScriptConnection? = nil
 
 --- Panel Oluşturma ---
 
@@ -41,13 +63,13 @@ ScreenGui.Parent = playerGui
 -- Ana Çerçeve (Ana Panel)
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainPanel"
-MainFrame.Size = UDim2.new(0.3, 0, 0.7, 0) -- Ekranın %30 genişliği, %70 yüksekliği
-MainFrame.Position = UDim2.new(0.35, 0, 0.15, 0) -- Ekranın ortasına yakın konumlandır
+MainFrame.Size = UDim2.new(0.3, 0, 0.7, 0)
+MainFrame.Position = UDim2.new(0.35, 0, 0.15, 0)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 MainFrame.BorderSizePixel = 2
 MainFrame.BorderColor3 = Color3.fromRGB(60, 60, 60)
-MainFrame.Active = true -- Sürüklemek için gerekli
-MainFrame.Draggable = true -- Sürüklenebilir yap
+MainFrame.Active = true
+MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
 
 -- UI Corner (köşeleri yumuşatma)
@@ -93,10 +115,11 @@ CloseButton.MouseButton1Click:Connect(function()
     -- Panel kapatıldığında tüm özellikleri varsayılana döndür
     humanoid.WalkSpeed = defaultWalkSpeed
     humanoid.JumpPower = defaultJumpPower
-    if isFlying then toggleFly() end
-    if isNoclipping then toggleNoclip() end
-    if canFirlat then toggleFirlat() end
-    if isAutoDriving then toggleAutoDrive() end
+    if isFlying then toggleFly(false) end
+    if isNoclipping then toggleNoclip(false) end
+    if canFirlat then toggleFirlat(false) end
+    if isAutoDriving then toggleAutoDrive(false) end
+    if chatConnection then chatConnection:Disconnect() end
 end)
 
 -- Özellikler için ScrollFrame (Kaydırılabilir Alan)
@@ -105,7 +128,7 @@ ScrollFrame.Name = "FeaturesScrollFrame"
 ScrollFrame.Size = UDim2.new(1, 0, 0.9, 0)
 ScrollFrame.Position = UDim2.new(0, 0, 0.1, 0)
 ScrollFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0) -- İçerik eklendikçe otomatik ayarlanacak
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80)
 ScrollFrame.ScrollBarThickness = 6
 ScrollFrame.Parent = MainFrame
@@ -113,7 +136,7 @@ ScrollFrame.Parent = MainFrame
 -- Özellik Butonlarını düzenlemek için UIListLayout
 local UIListLayout = Instance.new("UIListLayout")
 UIListLayout.Parent = ScrollFrame
-UIListLayout.Padding = UDim.new(0, 8) -- Butonlar arası boşluk
+UIListLayout.Padding = UDim.new(0, 8)
 UIListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
@@ -121,7 +144,7 @@ UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 local function createToggleButton(name: string, defaultText: string, activeText: string, color: Color3, callback: (boolean) -> ())
     local button = Instance.new("TextButton")
     button.Name = name .. "Button"
-    button.Size = UDim2.new(0.9, 0, 0.09, 0) -- Sabit boyut
+    button.Size = UDim2.new(0.9, 0, 0.09, 0)
     button.BackgroundColor3 = color
     button.TextColor3 = Color3.fromRGB(255, 255, 255)
     button.Font = Enum.Font.SourceSansBold
@@ -170,6 +193,130 @@ end
 
 --- Özellik Fonksiyonları ---
 
+-- Mobil kontrolleri oluştur
+local function createMobileControls()
+    if not isMobile then return end
+    
+    -- Ana kontrol çerçevesi
+    touchControlsFrame = Instance.new("Frame")
+    touchControlsFrame.Name = "MobileControls"
+    touchControlsFrame.Size = UDim2.new(1, 0, 0.3, 0)
+    touchControlsFrame.Position = UDim2.new(0, 0, 0.7, 0)
+    touchControlsFrame.BackgroundTransparency = 1
+    touchControlsFrame.Parent = ScreenGui
+
+    -- Joystick (hareket kontrolü)
+    touchJoystick = Instance.new("Frame")
+    touchJoystick.Name = "Joystick"
+    touchJoystick.Size = UDim2.new(0.2, 0, 0.2, 0)
+    touchJoystick.Position = UDim2.new(0.05, 0, 0.5, 0)
+    touchJoystick.AnchorPoint = Vector2.new(0, 0.5)
+    touchJoystick.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    touchJoystick.BackgroundTransparency = 0.7
+    touchJoystick.Parent = touchControlsFrame
+
+    local joystickUICorner = Instance.new("UICorner")
+    joystickUICorner.CornerRadius = UDim.new(0.5, 0)
+    joystickUICorner.Parent = touchJoystick
+
+    -- Zıplama butonu
+    touchJumpButton = Instance.new("TextButton")
+    touchJumpButton.Name = "JumpButton"
+    touchJumpButton.Size = UDim2.new(0.15, 0, 0.15, 0)
+    touchJumpButton.Position = UDim2.new(0.8, 0, 0.7, 0)
+    touchJumpButton.Text = "Zıpla"
+    touchJumpButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+    touchJumpButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    touchJumpButton.Font = Enum.Font.SourceSansBold
+    touchJumpButton.TextSize = 16
+    touchJumpButton.Parent = touchControlsFrame
+
+    local jumpUICorner = Instance.new("UICorner")
+    jumpUICorner.CornerRadius = UDim.new(0.5, 0)
+    jumpUICorner.Parent = touchJumpButton
+
+    -- Uçuş kontrolleri (sadece uçma aktifse görünür)
+    touchFlyUpButton = Instance.new("TextButton")
+    touchFlyUpButton.Name = "FlyUpButton"
+    touchFlyUpButton.Size = UDim2.new(0.15, 0, 0.15, 0)
+    touchFlyUpButton.Position = UDim2.new(0.8, 0, 0.5, 0)
+    touchFlyUpButton.Text = "Yukarı"
+    touchFlyUpButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    touchFlyUpButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    touchFlyUpButton.Font = Enum.Font.SourceSansBold
+    touchFlyUpButton.TextSize = 16
+    touchFlyUpButton.Visible = false
+    touchFlyUpButton.Parent = touchControlsFrame
+
+    local flyUpUICorner = Instance.new("UICorner")
+    flyUpUICorner.CornerRadius = UDim.new(0.5, 0)
+    flyUpUICorner.Parent = touchFlyUpButton
+
+    touchFlyDownButton = Instance.new("TextButton")
+    touchFlyDownButton.Name = "FlyDownButton"
+    touchFlyDownButton.Size = UDim2.new(0.15, 0, 0.15, 0)
+    touchFlyDownButton.Position = UDim2.new(0.8, 0, 0.8, 0)
+    touchFlyDownButton.Text = "Aşağı"
+    touchFlyDownButton.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+    touchFlyDownButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    touchFlyDownButton.Font = Enum.Font.SourceSansBold
+    touchFlyDownButton.TextSize = 16
+    touchFlyDownButton.Visible = false
+    touchFlyDownButton.Parent = touchControlsFrame
+
+    local flyDownUICorner = Instance.new("UICorner")
+    flyDownUICorner.CornerRadius = UDim.new(0.5, 0)
+    flyDownUICorner.Parent = touchFlyDownButton
+
+    -- Joystick hareketi için bağlantılar
+    local joystickActive = false
+    local joystickPosition = Vector2.new(0, 0)
+    local joystickStartPosition = Vector2.new(0, 0)
+
+    touchJoystick.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            joystickActive = true
+            joystickStartPosition = Vector2.new(input.Position.X, input.Position.Y)
+        end
+    end)
+
+    touchJoystick.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            joystickActive = false
+            joystickPosition = Vector2.new(0, 0)
+        end
+    end)
+
+    UserInputService.TouchMoved:Connect(function(input, processed)
+        if not processed and joystickActive then
+            local currentPosition = Vector2.new(input.Position.X, input.Position.Y)
+            joystickPosition = (currentPosition - joystickStartPosition) * 0.01 -- Duyarlılık ayarı
+        end
+    end)
+
+    -- Zıplama butonu
+    touchJumpButton.MouseButton1Down:Connect(function()
+        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end)
+
+    -- Uçuş butonları
+    touchFlyUpButton.MouseButton1Down:Connect(function()
+        flyKeys.Up = Enum.KeyCode.Space -- Yukarı uçma
+    end)
+
+    touchFlyUpButton.MouseButton1Up:Connect(function()
+        flyKeys.Up = nil
+    end)
+
+    touchFlyDownButton.MouseButton1Down:Connect(function()
+        flyKeys.Down = Enum.KeyCode.LeftShift -- Aşağı uçma
+    end)
+
+    touchFlyDownButton.MouseButton1Up:Connect(function()
+        flyKeys.Down = nil
+    end)
+end
+
 -- Karakter Yeniden Doğduğunda Durumları Sıfırlama
 local function resetFeaturesOnSpawn()
     -- Önceki bağlantıları temizle
@@ -177,6 +324,7 @@ local function resetFeaturesOnSpawn()
     if seatedConnection then seatedConnection:Disconnect() end
     if touchConnection then touchConnection:Disconnect() end
     if driveConnection then driveConnection:Disconnect() end
+    if flyConnection then flyConnection:Disconnect() end
 
     -- Yeni karakteri bekle
     character = player.Character or player.CharacterAdded:Wait()
@@ -197,38 +345,101 @@ local function resetFeaturesOnSpawn()
     -- Yeniden doğduktan sonra yeni bağlantıları kur
     diedConnection = humanoid.Died:Connect(resetFeaturesOnSpawn)
     seatedConnection = humanoid.Seated:Connect(onCharacterSeated)
+    
+    -- Mobil kontrolleri yeniden oluştur
+    if isMobile then
+        createMobileControls()
+    end
 end
 
 characterAddedConnection = player.CharacterAdded:Connect(resetFeaturesOnSpawn)
 diedConnection = humanoid.Died:Connect(resetFeaturesOnSpawn) -- İlk bağlantıyı kur
 
 -- Hız Ayarı
-local speedStates = {defaultWalkSpeed, 30, 50, 80, 120} -- Varsayılan hız da dahil
+local speedStates = {defaultWalkSpeed, 30, 50, 80, 120}
 local function setWalkSpeed(speed: number)
     humanoid.WalkSpeed = speed
 end
 local speedButton = createCycleButton("Speed", "Hız: ", speedStates, 1, Color3.fromRGB(70, 130, 180), setWalkSpeed)
 
 -- Zıplama Yüksekliği Ayarı
-local jumpStates = {defaultJumpPower, 100, 200, 500, 1000} -- Varsayılan zıplama gücü de dahil
+local jumpStates = {defaultJumpPower, 100, 200, 500, 1000}
 local function setJumpPower(power: number)
     humanoid.JumpPower = power
 end
 local jumpButton = createCycleButton("Jump", "Zıplama: ", jumpStates, 1, Color3.fromRGB(70, 130, 180), setJumpPower)
 
 -- Uçma (Fly) Özelliği
-local function toggleFly(active: boolean)
-    isFlying = active
-    if isFlying then
-        humanoid.PlatformStand = true
-        humanoidRootPart.Anchored = true
-        Workspace.Gravity = 0
+local function handleFly(input: InputObject, gameProcessed: boolean)
+    if not isFlying or gameProcessed then return end
+    
+    local flyDirection = Vector3.new(0, 0, 0)
+    
+    -- Klavye kontrolleri
+    if input.KeyCode == flyKeys.Forward then
+        flyDirection = flyDirection + humanoidRootPart.CFrame.LookVector
+    elseif input.KeyCode == flyKeys.Backward then
+        flyDirection = flyDirection - humanoidRootPart.CFrame.LookVector
+    elseif input.KeyCode == flyKeys.Left then
+        flyDirection = flyDirection - humanoidRootPart.CFrame.RightVector
+    elseif input.KeyCode == flyKeys.Right then
+        flyDirection = flyDirection + humanoidRootPart.CFrame.RightVector
+    elseif input.KeyCode == flyKeys.Up then
+        flyDirection = flyDirection + Vector3.new(0, 1, 0)
+    elseif input.KeyCode == flyKeys.Down then
+        flyDirection = flyDirection + Vector3.new(0, -1, 0)
+    end
+    
+    -- Mobil kontroller
+    if isMobile and joystickPosition ~= Vector2.new(0, 0) then
+        flyDirection = flyDirection + 
+            (humanoidRootPart.CFrame.LookVector * joystickPosition.Y) +
+            (humanoidRootPart.CFrame.RightVector * joystickPosition.X)
+    end
+    
+    if flyDirection.Magnitude > 0 then
+        flyDirection = flyDirection.Unit * flySpeed
+        humanoidRootPart.Velocity = flyDirection
     else
-        humanoidRootPart.Anchored = false
-        humanoid.PlatformStand = false
-        Workspace.Gravity = defaultGravity
+        humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
     end
 end
+
+local function toggleFly(active: boolean)
+    isFlying = active
+    
+    if isFlying then
+        humanoid.PlatformStand = true
+        Workspace.Gravity = 0
+        
+        -- Uçuş bağlantısını kur
+        flyConnection = RunService.Heartbeat:Connect(function()
+            handleFly({KeyCode = Enum.KeyCode.Unknown}, false) -- Sürekli güncelleme için
+        end)
+        
+        -- Mobil kontrolleri göster
+        if isMobile and touchFlyUpButton and touchFlyDownButton then
+            touchFlyUpButton.Visible = true
+            touchFlyDownButton.Visible = true
+        end
+    else
+        if flyConnection then
+            flyConnection:Disconnect()
+            flyConnection = nil
+        end
+        
+        humanoidRootPart.Velocity = Vector3.new(0, 0, 0)
+        humanoid.PlatformStand = false
+        Workspace.Gravity = defaultGravity
+        
+        -- Mobil kontrolleri gizle
+        if isMobile and touchFlyUpButton and touchFlyDownButton then
+            touchFlyUpButton.Visible = false
+            touchFlyDownButton.Visible = false
+        end
+    end
+end
+
 local flyButton, initialFlyState = createToggleButton("Fly", "Uçma: Kapalı", "Uçma: Açık", Color3.fromRGB(70, 130, 180), toggleFly)
 
 -- Noclip Özelliği
@@ -236,7 +447,7 @@ local function toggleNoclip(active: boolean)
     isNoclipping = active
     for _, part in ipairs(character:GetChildren()) do
         if part:IsA("BasePart") then
-            task.spawn(function() -- Her parçayı ayrı bir iş parçacığında işle
+            task.spawn(function()
                 pcall(function()
                     part.CanCollide = not isNoclipping
                 end)
@@ -250,9 +461,8 @@ local noclipButton, initialNoclipState = createToggleButton("Noclip", "Noclip: K
 local function onPartTouched(otherPart: BasePart)
     if canFirlat and otherPart and otherPart.Parent ~= character and otherPart.Parent ~= Workspace.Terrain then
         if otherPart:IsA("BasePart") and not otherPart.Anchored then
-            local direction = humanoidRootPart.CFrame.lookVector * 150 -- İtme yönü ve gücü
-            -- Eğer obje çok ağırsa daha fazla güç uygulayabilirsin
-            otherPart:ApplyImpulse(direction * otherPart:GetMass() * 0.1) -- Kütleye göre itme gücü, çarpanı ayarla
+            local direction = humanoidRootPart.CFrame.lookVector * 150
+            otherPart:ApplyImpulse(direction * otherPart:GetMass() * 0.1)
         end
     end
 end
@@ -274,20 +484,16 @@ local firlatmaButton, initialFirlatState = createToggleButton("Firlatma", "Objel
 
 -- Araçları Otomatik Sürme
 local function startAutoDrive(seat: VehicleSeat)
-    if driveConnection then driveConnection:Disconnect() end -- Önceki bağlantıyı kes
+    if driveConnection then driveConnection:Disconnect() end
     driveConnection = RunService.Heartbeat:Connect(function()
         if seat and seat.Occupant == humanoid then
-            seat.Throttle = 1 -- Sürekli ileri git
-            seat.Steer = 0 -- Direksiyonu düz tut
-            -- Daha gelişmiş otomatik sürüş algoritmaları burada eklenebilir.
-            -- Örneğin, bir hedef noktasına yönelme veya bir patikayı takip etme.
+            seat.Throttle = 1
+            seat.Steer = 0
         else
-            -- Koltuktan kalkarsa otomatik sürüşü durdur
             toggleAutoDrive(false)
             autoDriveButton.Text = "Otomatik Sürüş: Kapalı"
         end
     end)
-    print("Otomatik sürüş başladı!")
 end
 
 local function stopAutoDrive()
@@ -299,7 +505,6 @@ local function stopAutoDrive()
         currentVehicleSeat.Throttle = 0
         currentVehicleSeat.Steer = 0
     end
-    print("Otomatik sürüş durdu.")
 end
 
 local function toggleAutoDrive(active: boolean)
@@ -307,17 +512,13 @@ local function toggleAutoDrive(active: boolean)
     if isAutoDriving then
         if currentVehicleSeat and currentVehicleSeat.Occupant == humanoid then
             startAutoDrive(currentVehicleSeat)
-        else
-            -- Eğer araçta değilse, özelliği aktif et ama hemen sürme
-            warn("Otomatik sürüş açıldı, ancak bir araçta değilsiniz. Araca bindiğinizde başlayacaktır.")
         end
     else
         stopAutoDrive()
     end
 end
 
--- Oyuncu bir koltuğa oturduğunda kontrol
-seatedConnection = humanoid.Seated:Connect(function(seated: boolean, seat: Seat?)
+local function onCharacterSeated(seated: boolean, seat: Seat?)
     if seated and seat:IsA("VehicleSeat") then
         currentVehicleSeat = seat
         if isAutoDriving then
@@ -329,10 +530,57 @@ seatedConnection = humanoid.Seated:Connect(function(seated: boolean, seat: Seat?
         end
         currentVehicleSeat = nil
     end
-end)
+end
+
+seatedConnection = humanoid.Seated:Connect(onCharacterSeated)
 
 local autoDriveButton, initialAutoDriveState = createToggleButton("AutoDrive", "Otomatik Sürüş: Kapalı", "Otomatik Sürüş: Açık", Color3.fromRGB(70, 130, 180), toggleAutoDrive)
 
+-- Chat komutları
+local function handleChatCommands(message: string)
+    local args = string.split(string.lower(message), " ")
+    local command = args[1]
+    
+    if command == "/fly" then
+        toggleFly(not isFlying)
+        return true -- Mesajı gizle
+    elseif command == "/speed" and args[2] then
+        local speed = tonumber(args[2])
+        if speed then
+            humanoid.WalkSpeed = speed
+            return true
+        end
+    elseif command == "/jump" and args[2] then
+        local power = tonumber(args[2])
+        if power then
+            humanoid.JumpPower = power
+            return true
+        end
+    elseif command == "/noclip" then
+        toggleNoclip(not isNoclipping)
+        return true
+    end
+    
+    return false
+end
+
+-- Chat bağlantısını kur
+if TextChatService then
+    chatConnection = TextChatService.OnIncomingMessage:Connect(function(message: TextChatMessage)
+        if message.TextSource then
+            if message.TextSource.UserId == player.UserId then
+                if handleChatCommands(message.Text) then
+                    -- Komut işlendi, mesajı gizle
+                    task.defer(function()
+                        if message:IsDescendantOf(game) then
+                            message:Destroy()
+                        end
+                    end)
+                end
+            end
+        end
+    end)
+end
 
 -- CanvasSize'ı tüm elemanlar yerleştirildikten sonra ayarla
 local function updateCanvasSize()
@@ -341,7 +589,7 @@ local function updateCanvasSize()
 end
 
 -- Tüm UI elemanları eklendikten sonra bir kez güncelle
-task.wait(0.1) -- UI elemanlarının oluşturulması için kısa bir bekleme
+task.wait(0.1)
 updateCanvasSize()
 
 -- UI elemanları eklendiğinde veya çıkarıldığında CanvasSize'ı güncelle
@@ -349,7 +597,6 @@ UIListLayout.ChildAdded:Connect(updateCanvasSize)
 UIListLayout.ChildRemoved:Connect(updateCanvasSize)
 
 -- Panel gizleme/gösterme için bir tuş bağlama (örneğin 'P' tuşu)
-local UserInputService = game:GetService("UserInputService")
 local isPanelVisible = true
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
@@ -358,3 +605,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
         MainFrame.Visible = isPanelVisible
     end
 end)
+
+-- Mobil kontrolleri oluştur
+createMobileControls()
