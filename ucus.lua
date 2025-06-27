@@ -1,94 +1,163 @@
--- GUI öğelerini oluştur
-local player = game.Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
 
-local screenGui = Instance.new("ScreenGui", playerGui)
-screenGui.Name = "FlyGui"
+-- Admin kontrol (kendi adını ekle)
+local ADMINS = {["SeninKullaniciAdin"] = true}
+if not ADMINS[player.Name] then return end
 
-local mainFrame = Instance.new("Frame", screenGui)
-mainFrame.Size = UDim2.new(0, 200, 0, 100)
-mainFrame.Position = UDim2.new(0, 50, 0, 50)
-mainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-mainFrame.BorderSizePixel = 0
-mainFrame.Active = true
-mainFrame.Draggable = true
+-- Basit GUI
+local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+local panel = Instance.new("Frame", gui)
+panel.Size = UDim2.new(0, 300, 0, 400)
+panel.Position = UDim2.new(0.5, -150, 0.5, -200)
+panel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+panel.Visible = false
 
-local topBar = Instance.new("Frame", mainFrame)
-topBar.Size = UDim2.new(1, 0, 0, 25)
-topBar.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-
-local closeButton = Instance.new("TextButton", topBar)
-closeButton.Size = UDim2.new(0, 25, 1, 0)
-closeButton.Position = UDim2.new(1, -25, 0, 0)
-closeButton.Text = "X"
-closeButton.TextColor3 = Color3.new(1, 1, 1)
-closeButton.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
-
-local toggleButton = Instance.new("TextButton", mainFrame)
-toggleButton.Size = UDim2.new(1, -20, 0, 40)
-toggleButton.Position = UDim2.new(0, 10, 0, 40)
-toggleButton.Text = "Aç"
-toggleButton.TextColor3 = Color3.new(1, 1, 1)
-toggleButton.BackgroundColor3 = Color3.fromRGB(0, 120, 0)
-toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.TextSize = 24
-
--- Uçuş değişkenleri
-local flying = false
-local bodyGyro
-local bodyVelocity
-local speed = 50
-
--- Uçuş başlat
-local function startFlying()
-    local character = player.Character or player.CharacterAdded:Wait()
-    local hrp = character:WaitForChild("HumanoidRootPart")
-
-    bodyGyro = Instance.new("BodyGyro")
-    bodyGyro.P = 9e4
-    bodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
-    bodyGyro.CFrame = hrp.CFrame
-    bodyGyro.Parent = hrp
-
-    bodyVelocity = Instance.new("BodyVelocity")
-    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
-    bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-    bodyVelocity.Parent = hrp
-
-    flying = true
-
-    -- Hareketi takip et
-    game:GetService("RunService").RenderStepped:Connect(function()
-        if flying and character and character:FindFirstChild("Humanoid") then
-            local moveDir = character.Humanoid.MoveDirection
-            bodyVelocity.Velocity = (moveDir * speed) + Vector3.new(0, 0.5, 0)
-            bodyGyro.CFrame = workspace.CurrentCamera.CFrame
-        end
-    end)
-end
-
--- Uçuşu durdur
-local function stopFlying()
-    flying = false
-    if bodyGyro then bodyGyro:Destroy() end
-    if bodyVelocity then bodyVelocity:Destroy() end
-end
-
--- Buton işlevi: Aç/Kapat
-toggleButton.MouseButton1Click:Connect(function()
-    if flying then
-        stopFlying()
-        toggleButton.Text = "Aç"
-        toggleButton.BackgroundColor3 = Color3.fromRGB(0, 120, 0)
-    else
-        startFlying()
-        toggleButton.Text = "Kapat"
-        toggleButton.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
-    end
+local openBtn = Instance.new("TextButton", gui)
+openBtn.Text = "Admin Panel"
+openBtn.Size = UDim2.new(0, 120, 0, 40)
+openBtn.Position = UDim2.new(1, -130, 0, 10)
+openBtn.MouseButton1Click:Connect(function()
+	panel.Visible = not panel.Visible
 end)
 
--- X butonuna basınca GUI'yi yok et
-closeButton.MouseButton1Click:Connect(function()
-    screenGui:Destroy()
-    stopFlying()
+local function createButton(text, y, cb)
+	local btn = Instance.new("TextButton", panel)
+	btn.Size = UDim2.new(1, -20, 0, 35)
+	btn.Position = UDim2.new(0, 10, 0, y)
+	btn.Text = text
+	btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 18
+	btn.MouseButton1Click:Connect(cb)
+end
+
+-- Uçma değişkenleri
+local flying = false
+local flyConn
+
+local function toggleFly()
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChild("Humanoid")
+	if not hrp or not hum then return end
+
+	flying = not flying
+	if flying then
+		hum.PlatformStand = true
+		flyConn = RunService.RenderStepped:Connect(function()
+			hrp.Velocity = workspace.CurrentCamera.CFrame.LookVector * 50
+		end)
+	else
+		if flyConn then flyConn:Disconnect() end
+		hum.PlatformStand = false
+	end
+end
+
+-- Noclip toggle
+local noclip = false
+local noclipConn
+
+local function toggleNoclip()
+	noclip = not noclip
+	local char = player.Character
+	if not char then return end
+	if noclip then
+		noclipConn = RunService.Stepped:Connect(function()
+			for _, p in pairs(char:GetChildren()) do
+				if p:IsA("BasePart") then p.CanCollide = false end
+			end
+		end)
+	else
+		if noclipConn then noclipConn:Disconnect() end
+		for _, p in pairs(char:GetChildren()) do
+			if p:IsA("BasePart") then p.CanCollide = true end
+		end
+	end
+end
+
+-- ESP Basit
+local ESPFolder = Instance.new("Folder", gui)
+ESPFolder.Name = "ESPFolder"
+local ESPOn = false
+
+local function createESP(plr)
+	local char = plr.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChild("Humanoid")
+	if not hrp or not hum then return end
+
+	local billboard = Instance.new("BillboardGui", ESPFolder)
+	billboard.Adornee = hrp
+	billboard.Size = UDim2.new(0,150,0,50)
+	billboard.AlwaysOnTop = true
+
+	local label = Instance.new("TextLabel", billboard)
+	label.Size = UDim2.new(1,0,1,0)
+	label.BackgroundTransparency = 1
+	label.TextColor3 = Color3.new(1,0,0)
+	label.Font = Enum.Font.SourceSansBold
+	label.TextSize = 14
+	label.Text = plr.Name .. " | HP: " .. math.floor(hum.Health)
+
+	hum:GetPropertyChangedSignal("Health"):Connect(function()
+		label.Text = plr.Name .. " | HP: " .. math.floor(hum.Health)
+	end)
+end
+
+local function toggleESP()
+	ESPOn = not ESPOn
+	ESPFolder:ClearAllChildren()
+	if ESPOn then
+		for _, plr in pairs(Players:GetPlayers()) do
+			if plr ~= player then
+				createESP(plr)
+			end
+		end
+		Players.PlayerAdded:Connect(function(plr)
+			if ESPOn and plr ~= player then
+				plr.CharacterAdded:Connect(function()
+					wait(1)
+					createESP(plr)
+				end)
+			end
+		end)
+	end
+end
+
+-- Butonlar
+createButton("Işınlan (0,10,0)", 10, function()
+	local char = player.Character
+	if char and char:FindFirstChild("HumanoidRootPart") then
+		char.HumanoidRootPart.CFrame = CFrame.new(0,10,0)
+	end
+end)
+
+createButton("Hız = 100", 55, function()
+	local hum = player.Character and player.Character:FindFirstChild("Humanoid")
+	if hum then hum.WalkSpeed = 100 end
+end)
+
+createButton("Zıplama = 150", 100, function()
+	local hum = player.Character and player.Character:FindFirstChild("Humanoid")
+	if hum then hum.JumpPower = 150 end
+end)
+
+createButton("Uçmayı Aç/Kapat", 145, toggleFly)
+createButton("NoClip Aç/Kapat", 190, toggleNoclip)
+createButton("ESP Aç/Kapat", 235, toggleESP)
+
+createButton("Tüm Oyunculara Işınlan", 280, function()
+	local char = player.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+			char.HumanoidRootPart.CFrame = plr.Character.HumanoidRootPart.CFrame + Vector3.new(2,0,0)
+			wait(1)
+		end
+	end
 end)
